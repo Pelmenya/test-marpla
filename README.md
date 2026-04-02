@@ -109,8 +109,14 @@ cp .env.example .env
 
 ### 2. Запустить контейнеры
 
+**Production:**
 ```bash
 docker-compose up -d --build
+```
+
+**Development** (Hot Module Replacement — изменения в `backend/src/` подхватываются без перезапуска):
+```bash
+docker-compose -f docker-compose.dev.yml up -d --build
 ```
 
 ### 3. Настроить Flowise
