@@ -289,10 +289,11 @@ Flowise 2.x LLM Chain не поддерживает `overrideConfig.promptValues
 | `FLOWISE_CHATFLOW_ID` | ID импортированного chatflow | — |
 | `FLOWISE_TIMEOUT_MS` | Таймаут запроса к Flowise (мс) | `60000` |
 | `OPENAI_BASE_PATH` | URL OpenAI-совместимого провайдера (опционально) | — |
+| `CORS_ORIGIN` | Разрешённый origin для CORS | `*` |
 
 ## Тесты
 
-29 юнит-тестов (Jest) покрывают всю логику бэкенда.
+36 юнит-тестов (Jest) покрывают всю логику бэкенда.
 
 ```bash
 cd backend && npm test
@@ -300,9 +301,9 @@ cd backend && npm test
 
 | Файл | Тестов | Что покрывает |
 |------|--------|---------------|
-| `seo.service.spec.ts` | 13 | Парсинг ответа Flowise (`json`/`text`), bullets (строка/массив), таймаут, пустой ответ, невалидный JSON, недоступность сервиса, формат payload |
+| `seo.service.spec.ts` | 20 | Парсинг ответа Flowise (`json`/`text`), bullets (строка/массив), таймаут, пустой ответ, невалидный JSON, retry при 502/503, SSE-стриминг (token events, JSON из буфера, пустой стрим), auth header, basePath override, защита от утечки LLM output |
 | `seo.controller.spec.ts` | 9 | HTTP-статусы (200/502/503/504/500), SSE-заголовки, стриминг ошибок |
-| `generate-seo.dto.spec.ts` | 7 | Обязательные поля, пустые значения, неверные типы, лишние поля |
+| `generate-seo.dto.spec.ts` | 7 | Обязательные поля, пустые значения, неверные типы |
 
 Pre-commit хук (husky) автоматически запускает тесты перед каждым коммитом.
 
@@ -312,7 +313,8 @@ Pre-commit хук (husky) автоматически запускает тест
 test-marpla/
 ├── .env.example                  # Шаблон конфигурации
 ├── .gitignore
-├── docker-compose.yml            # Flowise + Backend
+├── docker-compose.yml            # Flowise + Backend (production)
+├── docker-compose.dev.yml        # Dev-режим с HMR
 ├── flowise/
 │   ├── ExportData.json           # Экспорт chatflow для импорта в Flowise
 │   └── import.sh                 # Скрипт-помощник для настройки
@@ -320,7 +322,8 @@ test-marpla/
 ├── backend/
 │   ├── package.json
 │   ├── tsconfig.json
-│   ├── Dockerfile
+│   ├── Dockerfile                # Multi-stage build (Node 20 Alpine)
+│   ├── webpack-hmr.config.js     # Hot Module Replacement для dev
 │   └── src/
 │       ├── main.ts               # Bootstrap + ValidationPipe + CORS
 │       ├── app.module.ts         # ConfigModule + SeoModule
