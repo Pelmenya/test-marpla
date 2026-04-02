@@ -23,6 +23,10 @@ const REQUIRED_FIELDS: (keyof SeoResult)[] = [
     'bullets',
 ];
 
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1000;
+const RETRYABLE_STATUSES = [502, 503, 504];
+
 @Injectable()
 export class SeoService {
     private readonly logger = new Logger(SeoService.name);
@@ -35,7 +39,13 @@ export class SeoService {
     constructor(private readonly config: ConfigService) {
         this.flowiseUrl = this.config.getOrThrow<string>('FLOWISE_API_URL');
         this.chatflowId = this.config.getOrThrow<string>('FLOWISE_CHATFLOW_ID');
-        this.timeoutMs = Number(this.config.get('FLOWISE_TIMEOUT_MS', 30000));
+
+        const rawTimeout = this.config.get('FLOWISE_TIMEOUT_MS', 30000);
+        this.timeoutMs = Number(rawTimeout);
+        if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
+            throw new Error(`Invalid FLOWISE_TIMEOUT_MS: ${rawTimeout}`);
+        }
+
         this.openaiBasePath = this.config.get<string>('OPENAI_BASE_PATH') || null;
 
         const user = this.config.get<string>('FLOWISE_USERNAME');
@@ -55,7 +65,7 @@ export class SeoService {
         const body = await response.json();
 
         if (body?.json && typeof body.json === 'object') {
-            return this.parseAndValidate(JSON.stringify(body.json));
+            return this.validateResult(body.json);
         }
 
         const text: string = body?.text ?? '';
@@ -82,7 +92,7 @@ export class SeoService {
         if (contentType.includes('application/json')) {
             const body = await response.json();
             if (body?.json && typeof body.json === 'object') {
-                const result = this.parseAndValidate(JSON.stringify(body.json));
+                const result = this.validateResult(body.json);
                 yield { event: 'end', data: { result } };
                 return;
             }
@@ -138,7 +148,7 @@ export class SeoService {
             yield { event: 'end', data: { result } };
         } catch (err) {
             try {
-                const jsonMatch = buffer.match(/\{[\s\S]*\}/);
+                const jsonMatch = buffer.match(/\{[\s\S]*?\}/);
                 if (jsonMatch) {
                     const result = this.parseAndValidate(jsonMatch[0]);
                     yield { event: 'end', data: { result } };
@@ -151,7 +161,7 @@ export class SeoService {
             yield {
                 event: 'error',
                 data: {
-                    error: err instanceof Error ? err.message : 'Failed to parse LLM response',
+                    error: 'Failed to parse LLM response',
                     code: 'INVALID_JSON',
                 },
             };
@@ -184,40 +194,72 @@ export class SeoService {
             streaming,
         };
 
-        let response: Response;
-        try {
-            response = await fetch(url, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(payload),
-                signal: AbortSignal.timeout(this.timeoutMs),
-            });
-        } catch (err: unknown) {
-            if (err instanceof DOMException && err.name === 'TimeoutError') {
-                throw new FlowiseError(
-                    'TIMEOUT',
-                    `Flowise did not respond within ${this.timeoutMs}ms`,
-                );
+        let lastError: unknown;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            if (attempt > 0) {
+                this.logger.warn(`Retry attempt ${attempt}/${MAX_RETRIES}`);
+                await this.delay(RETRY_DELAY_MS * attempt);
             }
-            if (err instanceof TypeError && (err as any).cause) {
-                throw new FlowiseError(
-                    'SERVICE_UNAVAILABLE',
-                    `Cannot connect to Flowise at ${this.flowiseUrl}`,
-                );
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(this.timeoutMs),
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.text().catch(() => '');
+                    this.logger.error(`Flowise returned ${response.status}: ${errorBody}`);
+
+                    if (RETRYABLE_STATUSES.includes(response.status) && attempt < MAX_RETRIES) {
+                        lastError = new FlowiseError(
+                            'SERVICE_UNAVAILABLE',
+                            `Flowise returned HTTP ${response.status}`,
+                        );
+                        continue;
+                    }
+
+                    throw new FlowiseError(
+                        'SERVICE_UNAVAILABLE',
+                        `Flowise returned HTTP ${response.status}`,
+                    );
+                }
+
+                return response;
+            } catch (err: unknown) {
+                if (err instanceof FlowiseError) {
+                    throw err;
+                }
+                if (err instanceof DOMException || (err as any)?.name === 'TimeoutError') {
+                    throw new FlowiseError(
+                        'TIMEOUT',
+                        `Flowise did not respond within ${this.timeoutMs}ms`,
+                    );
+                }
+                if (attempt < MAX_RETRIES) {
+                    lastError = err;
+                    continue;
+                }
+                if (err instanceof TypeError && (err as any).cause) {
+                    throw new FlowiseError(
+                        'SERVICE_UNAVAILABLE',
+                        `Cannot connect to Flowise at ${this.flowiseUrl}`,
+                    );
+                }
+                throw new FlowiseError('SERVICE_UNAVAILABLE', `Flowise request failed`);
             }
-            throw new FlowiseError('SERVICE_UNAVAILABLE', `Flowise request failed: ${err}`);
         }
 
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => '');
-            this.logger.error(`Flowise returned ${response.status}: ${errorBody}`);
-            throw new FlowiseError(
-                'SERVICE_UNAVAILABLE',
-                `Flowise returned HTTP ${response.status}`,
-            );
-        }
+        throw lastError instanceof FlowiseError
+            ? lastError
+            : new FlowiseError('SERVICE_UNAVAILABLE', 'Flowise request failed after retries');
+    }
 
-        return response;
+    private delay(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     private extractToken(data: string): string {
@@ -229,17 +271,7 @@ export class SeoService {
         }
     }
 
-    private parseAndValidate(text: string): SeoResult {
-        let parsed: Record<string, unknown>;
-        try {
-            parsed = JSON.parse(text);
-        } catch {
-            throw new FlowiseError(
-                'INVALID_JSON',
-                `LLM output is not valid JSON: ${text.slice(0, 200)}`,
-            );
-        }
-
+    private validateResult(parsed: Record<string, unknown>): SeoResult {
         for (const field of REQUIRED_FIELDS) {
             if (parsed[field] === undefined || parsed[field] === null) {
                 throw new FlowiseError(
@@ -249,6 +281,25 @@ export class SeoService {
             }
         }
 
+        return this.normalizeSeoResult(parsed);
+    }
+
+    private parseAndValidate(text: string): SeoResult {
+        let parsed: Record<string, unknown>;
+        try {
+            parsed = JSON.parse(text);
+        } catch {
+            this.logger.error(`LLM output is not valid JSON: ${text.slice(0, 200)}`);
+            throw new FlowiseError(
+                'INVALID_JSON',
+                'Failed to parse LLM response as JSON',
+            );
+        }
+
+        return this.validateResult(parsed);
+    }
+
+    private normalizeSeoResult(parsed: Record<string, unknown>): SeoResult {
         let bullets: string[];
         if (Array.isArray(parsed.bullets)) {
             bullets = parsed.bullets.map(String);

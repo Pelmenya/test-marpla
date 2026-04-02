@@ -1,12 +1,18 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+    const logger = new Logger('Bootstrap');
     const app = await NestFactory.create(AppModule);
 
-    app.enableCors();
+    const configService = app.get(ConfigService);
+    const corsOrigin = configService.get<string>('CORS_ORIGIN', '*');
+
+    app.enableCors({
+        origin: corsOrigin,
+    });
 
     app.useGlobalPipes(
         new ValidationPipe({
@@ -16,11 +22,10 @@ async function bootstrap() {
         }),
     );
 
-    const configService = app.get(ConfigService);
     const port = configService.get<number>('BACKEND_PORT', 3001);
 
     await app.listen(port);
-    console.log(`Backend listening on port ${port}`);
+    logger.log(`Backend listening on port ${port}`);
 
     if (module.hot) {
         module.hot.accept();

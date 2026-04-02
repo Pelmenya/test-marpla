@@ -10,22 +10,23 @@ const VALID_SEO_JSON = {
     bullets: 'Titanium design, A17 Pro chip, 48MP camera, USB-C, Action Button',
 };
 
-const mockConfigService = {
-    getOrThrow: jest.fn((key: string) => {
-        const map: Record<string, string> = {
-            FLOWISE_API_URL: 'http://flowise:3000',
-            FLOWISE_CHATFLOW_ID: 'test-chatflow-id',
-        };
-        if (map[key]) return map[key];
-        throw new Error(`Missing ${key}`);
-    }),
-    get: jest.fn((key: string, defaultVal?: unknown) => {
-        const map: Record<string, string> = {
-            FLOWISE_TIMEOUT_MS: '30000',
-        };
-        return map[key] ?? defaultVal ?? undefined;
-    }),
-};
+function createMockConfig(overrides: Record<string, string> = {}) {
+    const values: Record<string, string> = {
+        FLOWISE_API_URL: 'http://flowise:3000',
+        FLOWISE_CHATFLOW_ID: 'test-chatflow-id',
+        FLOWISE_TIMEOUT_MS: '30000',
+        ...overrides,
+    };
+    return {
+        getOrThrow: jest.fn((key: string) => {
+            if (values[key] !== undefined) return values[key];
+            throw new Error(`Missing ${key}`);
+        }),
+        get: jest.fn((key: string, defaultVal?: unknown) => {
+            return values[key] ?? defaultVal ?? undefined;
+        }),
+    };
+}
 
 describe('SeoService', () => {
     let service: SeoService;
@@ -35,7 +36,7 @@ describe('SeoService', () => {
         const module: TestingModule = await Test.createTestingModule({
             providers: [
                 SeoService,
-                { provide: ConfigService, useValue: mockConfigService },
+                { provide: ConfigService, useValue: createMockConfig() },
             ],
         }).compile();
 
@@ -82,7 +83,6 @@ describe('SeoService', () => {
             });
 
             const result = await service.generate(dto);
-
             expect(result.title).toBe(VALID_SEO_JSON.title);
         });
 
@@ -97,7 +97,6 @@ describe('SeoService', () => {
             });
 
             const result = await service.generate(dto);
-
             expect(result.bullets).toEqual(['Titanium', 'A17 chip', 'USB-C']);
         });
 
@@ -124,6 +123,20 @@ describe('SeoService', () => {
             });
         });
 
+        it('should not leak LLM output in INVALID_JSON error message', async () => {
+            fetchSpy.mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ text: 'secret LLM output here' }),
+            });
+
+            try {
+                await service.generate(dto);
+            } catch (err) {
+                expect((err as FlowiseError).message).not.toContain('secret');
+                expect((err as FlowiseError).message).toBe('Failed to parse LLM response as JSON');
+            }
+        });
+
         it('should throw INVALID_JSON when required field is missing', async () => {
             const incomplete = { title: 'Test', meta_description: 'Test' };
             fetchSpy.mockResolvedValueOnce({
@@ -148,23 +161,43 @@ describe('SeoService', () => {
         it('should throw SERVICE_UNAVAILABLE on connection error', async () => {
             const err = new TypeError('fetch failed');
             (err as any).cause = new Error('ECONNREFUSED');
-            fetchSpy.mockRejectedValueOnce(err);
+            // 3 attempts (initial + 2 retries)
+            fetchSpy.mockRejectedValue(err);
 
             await expect(service.generate(dto)).rejects.toMatchObject({
                 code: 'SERVICE_UNAVAILABLE',
             });
         });
 
-        it('should throw SERVICE_UNAVAILABLE on HTTP 500', async () => {
-            fetchSpy.mockResolvedValueOnce({
+        it('should retry on HTTP 502 and succeed on second attempt', async () => {
+            fetchSpy
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 502,
+                    text: async () => 'Bad Gateway',
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: async () => ({ json: VALID_SEO_JSON }),
+                });
+
+            const result = await service.generate(dto);
+            expect(result.title).toBe(VALID_SEO_JSON.title);
+            expect(fetchSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('should throw SERVICE_UNAVAILABLE after retries exhausted', async () => {
+            fetchSpy.mockResolvedValue({
                 ok: false,
-                status: 500,
-                text: async () => 'Internal Server Error',
+                status: 503,
+                text: async () => 'Service Unavailable',
             });
 
             await expect(service.generate(dto)).rejects.toMatchObject({
                 code: 'SERVICE_UNAVAILABLE',
             });
+            // initial + 2 retries = 3
+            expect(fetchSpy).toHaveBeenCalledTimes(3);
         });
 
         it('should send correct payload to Flowise', async () => {
@@ -188,6 +221,63 @@ describe('SeoService', () => {
             expect(body.question).toContain('Category: Смартфоны');
             expect(body.question).toContain('Keywords: apple, iphone, флагман');
             expect(body.streaming).toBe(false);
+        });
+    });
+
+    describe('generate with auth', () => {
+        it('should send Authorization header when credentials configured', async () => {
+            const moduleWithAuth = await Test.createTestingModule({
+                providers: [
+                    SeoService,
+                    {
+                        provide: ConfigService,
+                        useValue: createMockConfig({
+                            FLOWISE_USERNAME: 'admin',
+                            FLOWISE_PASSWORD: 'secret',
+                        }),
+                    },
+                ],
+            }).compile();
+
+            const serviceWithAuth = moduleWithAuth.get<SeoService>(SeoService);
+            const spy = jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ json: VALID_SEO_JSON }),
+            } as any);
+
+            await serviceWithAuth.generate(dto);
+
+            const headers = spy.mock.calls[0]![1]!.headers as Record<string, string>;
+            expect(headers['Authorization']).toMatch(/^Basic /);
+            spy.mockRestore();
+        });
+    });
+
+    describe('generate with OPENAI_BASE_PATH', () => {
+        it('should include basePath in overrideConfig', async () => {
+            const moduleWithPath = await Test.createTestingModule({
+                providers: [
+                    SeoService,
+                    {
+                        provide: ConfigService,
+                        useValue: createMockConfig({
+                            OPENAI_BASE_PATH: 'https://proxy.example.com/v1',
+                        }),
+                    },
+                ],
+            }).compile();
+
+            const serviceWithPath = moduleWithPath.get<SeoService>(SeoService);
+            const spy = jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ json: VALID_SEO_JSON }),
+            } as any);
+
+            await serviceWithPath.generate(dto);
+
+            const body = JSON.parse(spy.mock.calls[0]![1]!.body as string);
+            expect(body.overrideConfig.basePath).toBe('https://proxy.example.com/v1');
+            spy.mockRestore();
         });
     });
 
@@ -240,6 +330,93 @@ describe('SeoService', () => {
                     // consume
                 }
             }).rejects.toMatchObject({ code: 'EMPTY_RESPONSE' });
+        });
+
+        it('should handle SSE stream with token events', async () => {
+            const sseData = [
+                'event: message\ndata: {"token":"Hello"}\n\n',
+                'event: message\ndata: {"token":" World"}\n\n',
+                'data: [DONE]\n\n',
+            ].join('');
+
+            const encoder = new TextEncoder();
+            const readable = new ReadableStream({
+                start(controller) {
+                    controller.enqueue(encoder.encode(sseData));
+                    controller.close();
+                },
+            });
+
+            fetchSpy.mockResolvedValueOnce({
+                ok: true,
+                body: readable,
+                headers: new Headers({ 'content-type': 'text/event-stream' }),
+            });
+
+            const events = [];
+            for await (const event of service.generateStream(dto)) {
+                events.push(event);
+            }
+
+            // Buffer "Hello World" is not valid JSON → error
+            const lastEvent = events[events.length - 1];
+            expect(lastEvent.event).toBe('error');
+            expect((lastEvent.data as any).code).toBe('INVALID_JSON');
+        });
+
+        it('should parse JSON from SSE stream buffer', async () => {
+            const jsonResult = JSON.stringify(VALID_SEO_JSON);
+            const sseData = `data: ${jsonResult}\n\ndata: [DONE]\n\n`;
+
+            const encoder = new TextEncoder();
+            const readable = new ReadableStream({
+                start(controller) {
+                    controller.enqueue(encoder.encode(sseData));
+                    controller.close();
+                },
+            });
+
+            fetchSpy.mockResolvedValueOnce({
+                ok: true,
+                body: readable,
+                headers: new Headers({ 'content-type': 'text/event-stream' }),
+            });
+
+            const events = [];
+            for await (const event of service.generateStream(dto)) {
+                events.push(event);
+            }
+
+            const endEvent = events.find((e) => e.event === 'end');
+            expect(endEvent).toBeDefined();
+            expect((endEvent!.data as any).result.title).toBe(VALID_SEO_JSON.title);
+        });
+
+        it('should yield EMPTY_RESPONSE when SSE stream has no data', async () => {
+            const sseData = 'data: [DONE]\n\n';
+
+            const encoder = new TextEncoder();
+            const readable = new ReadableStream({
+                start(controller) {
+                    controller.enqueue(encoder.encode(sseData));
+                    controller.close();
+                },
+            });
+
+            fetchSpy.mockResolvedValueOnce({
+                ok: true,
+                body: readable,
+                headers: new Headers({ 'content-type': 'text/event-stream' }),
+            });
+
+            const events = [];
+            for await (const event of service.generateStream(dto)) {
+                events.push(event);
+            }
+
+            expect(events).toHaveLength(1);
+            expect(events[0].event).toBe('error');
+            expect((events[0].data as any).code).toBe('EMPTY_RESPONSE');
         });
     });
 });
