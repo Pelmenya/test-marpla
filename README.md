@@ -273,6 +273,17 @@ data: {"error":"Flowise did not respond within 60000ms","code":"TIMEOUT"}
 - Parser инжектит `format_instructions` в промпт, давая LLM точный пример формата. Надёжнее, чем просто "верни JSON".
 - **autofix: true** — при невалидном ответе Flowise автоматически делает retry с описанием ошибки, снижая процент невалидных ответов.
 
+### Flowise vs прямой OpenAI SDK
+
+Flowise выбран согласно условию задания (визуальный chatflow). В production-проектах использую OpenAI SDK напрямую (`openai` npm) — это даёт больше контроля:
+
+- Прямой вызов `chat.completions.create()` без промежуточного слоя
+- Свой pipeline парсинга: extraction JSON-блоков из ответа → `jsonrepair` для восстановления сломанного JSON → нормализация полей
+- Двухуровневая модель: gpt-4o-mini для быстрых задач, gpt-4o для глубокого анализа с большим контекстом (32k tokens)
+- Поддержка нескольких провайдеров с fallback (основной + резервный через `baseURL`)
+
+Flowise удобен для прототипирования и визуализации цепочек, но добавляет latency (~100-200ms overhead) и ограничивает гибкость (например, `overrideConfig.promptValues` не работает с LLM Chain в v2.x).
+
 ### Передача данных через question
 
 Flowise 2.x LLM Chain не поддерживает `overrideConfig.promptValues` для подстановки переменных в Prompt Template. Поэтому данные о товаре передаются как структурированный текст в поле `question`, а промпт использует переменную `{input}` для их приёма.
