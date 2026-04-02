@@ -292,6 +292,42 @@ Flowise удобен для прототипирования и визуализ
 
 Flowise 2.x LLM Chain не поддерживает `overrideConfig.promptValues` для подстановки переменных в Prompt Template. Поэтому данные о товаре передаются как структурированный текст в поле `question`, а промпт использует переменную `{input}` для их приёма.
 
+## Развитие: от SEO-генератора к мультиагентной системе
+
+Текущий проект — это фундамент, на котором можно построить полноценный AI-микросервис с несколькими специализированными агентами. Подробная архитектура описана в [docs/features/prostor-ai-architecture.md](docs/features/prostor-ai-architecture.md).
+
+**Что уже есть и переиспользуется:**
+- NestJS backend с валидацией, обработкой ошибок и SSE-стримингом
+- Паттерн интеграции с LLM (вызов → парсинг → валидация → нормализация)
+- Docker-инфраструктура
+- Retry с backoff для отказоустойчивости
+
+**Куда масштабируется:**
+
+```mermaid
+graph LR
+    Gateway["API Gateway"]
+
+    subgraph Agents["AI-агенты (каждый — свой LLM + промпт + парсер)"]
+        SEO["SEO Agent<br/>gpt-4o-mini"]
+        Water["Water Analyst<br/>gpt-4o + Vision"]
+        Equipment["Equipment Selector<br/>gpt-4o + RAG"]
+        Price["Price Calculator<br/>gpt-4o-mini"]
+        Discovery["Discovery Agent<br/>gpt-4o + Vision"]
+    end
+
+    Orchestrator["LangGraph / Flowise<br/>маршрутизация между агентами"]
+
+    Gateway --> Orchestrator
+    Orchestrator --> SEO
+    Orchestrator --> Water
+    Orchestrator --> Equipment
+    Orchestrator --> Price
+    Orchestrator --> Discovery
+```
+
+Именно в мультиагентных сценариях (7 агентов, Vision API, экспертные правила, ветвление по состоянию клиента) раскрывается сила оркестраторов вроде Flowise/LangGraph — один агент не знает про другого, но оркестратор выстраивает цепочку: диагностика → анализ → подбор → расчёт → коммуникация.
+
 ## Конфигурация (.env)
 
 | Переменная | Описание | Default |
@@ -330,6 +366,9 @@ test-marpla/
 ├── .gitignore
 ├── docker-compose.yml            # Flowise + Backend (production)
 ├── docker-compose.dev.yml        # Dev-режим с HMR
+├── docs/
+│   └── features/
+│       └── prostor-ai-architecture.md  # Архитектура мультиагентной системы
 ├── flowise/
 │   ├── ExportData.json           # Экспорт chatflow для импорта в Flowise
 │   └── import.sh                 # Скрипт-помощник для настройки
