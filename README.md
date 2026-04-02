@@ -284,6 +284,22 @@ Flowise 2.x LLM Chain не поддерживает `overrideConfig.promptValues
 | `FLOWISE_TIMEOUT_MS` | Таймаут запроса к Flowise (мс) | `60000` |
 | `OPENAI_BASE_PATH` | URL OpenAI-совместимого провайдера (опционально) | — |
 
+## Тесты
+
+29 юнит-тестов (Jest) покрывают всю логику бэкенда.
+
+```bash
+cd backend && npm test
+```
+
+| Файл | Тестов | Что покрывает |
+|------|--------|---------------|
+| `seo.service.spec.ts` | 13 | Парсинг ответа Flowise (`json`/`text`), bullets (строка/массив), таймаут, пустой ответ, невалидный JSON, недоступность сервиса, формат payload |
+| `seo.controller.spec.ts` | 9 | HTTP-статусы (200/502/503/504/500), SSE-заголовки, стриминг ошибок |
+| `generate-seo.dto.spec.ts` | 7 | Обязательные поля, пустые значения, неверные типы, лишние поля |
+
+Pre-commit хук (husky) автоматически запускает тесты перед каждым коммитом.
+
 ## Структура проекта
 
 ```
@@ -294,6 +310,7 @@ test-marpla/
 ├── flowise/
 │   ├── ExportData.json           # Экспорт chatflow для импорта в Flowise
 │   └── import.sh                 # Скрипт-помощник для настройки
+├── package.json                  # Husky + корневые скрипты
 ├── backend/
 │   ├── package.json
 │   ├── tsconfig.json
@@ -303,9 +320,12 @@ test-marpla/
 │       ├── app.module.ts         # ConfigModule + SeoModule
 │       └── seo/
 │           ├── seo.module.ts
-│           ├── seo.controller.ts # POST /api/generate-seo (SSE + JSON)
-│           ├── seo.service.ts    # Flowise client, парсинг, валидация
+│           ├── seo.controller.ts      # POST /api/generate-seo (SSE + JSON)
+│           ├── seo.controller.spec.ts # Тесты контроллера
+│           ├── seo.service.ts         # Flowise client, парсинг, валидация
+│           ├── seo.service.spec.ts    # Тесты сервиса
 │           └── dto/
-│               └── generate-seo.dto.ts  # Валидация входных данных
+│               ├── generate-seo.dto.ts      # Валидация входных данных
+│               └── generate-seo.dto.spec.ts # Тесты DTO
 └── README.md
 ```

@@ -1,0 +1,12 @@
+{
+    "name": "test-marpla",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "test": "cd backend && npm test",
+        "prepare": "husky"
+    },
+    "devDependencies": {
+        "husky": "^9.1.0"
+    }
+}
