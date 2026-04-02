@@ -21,6 +21,13 @@ async function bootstrap() {
 
     await app.listen(port);
     console.log(`Backend listening on port ${port}`);
+
+    if (module.hot) {
+        module.hot.accept();
+        module.hot.dispose(() => app.close());
+    }
 }
+
+declare const module: any;
 
 bootstrap();
