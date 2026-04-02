@@ -4,3 +4,4 @@ dist/
 *.png
 *.log
 .claude/
+memory/
