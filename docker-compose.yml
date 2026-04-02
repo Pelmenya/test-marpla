@@ -1,0 +1,31 @@
+services:
+  flowise:
+    image: flowiseai/flowise:2.2.7
+    container_name: flowise
+    restart: unless-stopped
+    ports:
+      - "${FLOWISE_PORT}:3000"
+    volumes:
+      - flowise_data:/root/.flowise
+    networks:
+      - app-network
+
+  backend:
+    build: ./backend
+    container_name: seo-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT}:${BACKEND_PORT}"
+    env_file:
+      - .env
+    depends_on:
+      - flowise
+    networks:
+      - app-network
+
+volumes:
+  flowise_data:
+
+networks:
+  app-network:
+    driver: bridge
