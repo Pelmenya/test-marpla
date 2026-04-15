@@ -8,7 +8,7 @@
 |---------|------|--------|
 | [01](01-basics.md) | Основы: Prompt, Model, Chain, Parser | ✅ |
 | [02](02-memory.md) | Memory: память и диалоги | ✅ |
-| [03](03-rag.md) | RAG: работа с документами | 🔶 (частично, до top-K) |
+| [03](03-rag.md) | RAG: работа с документами | ✅ |
 | [04](04-data-analysis.md) | Анализ данных с embeddings (PCA, clustering) | ✅ |
 | 05 | Agents: агенты и инструменты | ⏳ |
 | 06 | Multi-agent: мульти-агентные системы | ⏳ |
