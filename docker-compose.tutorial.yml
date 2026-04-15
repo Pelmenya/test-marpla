@@ -1,0 +1,42 @@
+# Tutorial setup: Flowise 3.1.2 + PostgreSQL для изучения агентов и MCP
+# Основной docker-compose.yml остаётся с Flowise 2.2.7 для SEO-генератора
+#
+# Запуск:   docker-compose -f docker-compose.tutorial.yml up -d
+# Flowise:  http://localhost:${FLOWISE_TUTORIAL_PORT}
+# Postgres: localhost:${POSTGRES_TUTORIAL_PORT}
+
+services:
+    flowise-latest:
+        image: flowiseai/flowise:3.1.2
+        container_name: flowise-tutorial
+        restart: unless-stopped
+        ports:
+            - "${FLOWISE_TUTORIAL_PORT}:3000"
+        volumes:
+            - flowise_latest_data:/root/.flowise
+        networks:
+            - tutorial-network
+
+    postgres-tutorial:
+        image: postgres:17-alpine
+        container_name: postgres-tutorial
+        restart: unless-stopped
+        ports:
+            - "${POSTGRES_TUTORIAL_PORT}:5432"
+        environment:
+            POSTGRES_USER: ${POSTGRES_TUTORIAL_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_TUTORIAL_PASSWORD}
+            POSTGRES_DB: ${POSTGRES_TUTORIAL_DB}
+        volumes:
+            - postgres_tutorial_data:/var/lib/postgresql/data
+            - ./docs/tutorial/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+        networks:
+            - tutorial-network
+
+volumes:
+    flowise_latest_data:
+    postgres_tutorial_data:
+
+networks:
+    tutorial-network:
+        driver: bridge

@@ -10,7 +10,7 @@
 | [02](02-memory.md) | Memory: память и диалоги | ✅ |
 | [03](03-rag.md) | RAG: работа с документами | ✅ |
 | [04](04-data-analysis.md) | Анализ данных с embeddings (PCA, clustering) | ✅ |
-| 05 | Agents: агенты и инструменты | ⏳ |
+| [05](05-agents.md) | Agents: Tool Agent, MCP, практика с БД | ✅ |
 | 06 | Multi-agent: мульти-агентные системы | ⏳ |
 | 07 | Production: deployment, мониторинг | ⏳ |
 
